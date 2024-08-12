@@ -10,7 +10,7 @@ def get_pixel_grid(subsampling_factor):
     """
     pix_range = torch.arange(np.ceil(5000 / subsampling_factor), dtype=torch.float32)
     yy, xx = torch.meshgrid(pix_range, pix_range, indexing='ij')
-    return subsampling_factor * (torch.stack([xx, yy]) + 0.5)
+    return subsampling_factor * (torch.stack([xx, yy]))
 
 
 def to_homogeneous(input_tensor, dim=1):

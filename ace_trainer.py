@@ -330,6 +330,8 @@ class TrainerACE:
         self.training_buffer = {
             'features': torch.empty((training_buffer_size, self.regressor.feature_dim),
                                     dtype=(torch.float32, torch.float16)[self.options.use_half], device=self.training_buffer_device),
+            'heatmap': torch.empty((training_buffer_size, 1),
+                                    dtype=(torch.float32, torch.float16)[self.options.use_half], device=self.training_buffer_device),
             'target_px': torch.empty((training_buffer_size, 2), dtype=torch.float32, device=self.training_buffer_device),
             'aug_poses_inv': torch.empty((training_buffer_size, 3, 4), dtype=torch.float32, device=self.training_buffer_device),
             'poses_inv': torch.empty((training_buffer_size, 4, 4), dtype=torch.float32, device=self.training_buffer_device),
@@ -364,14 +366,15 @@ class TrainerACE:
 
                     # Compute image features.
                     with autocast(enabled=self.options.use_half):
-                        features_BCHW, heatmap_B1HW = self.regressor.get_features(image_B1HW)
+                        features_BCHW, position_B2HW, heatmap_B1HW = self.regressor.get_features(image_B1HW)
 
                     # Dimensions after the network's downsampling.
                     B, C, H, W = features_BCHW.shape
 
                     # The image_mask needs to be downsampled to the actual output resolution and cast to bool.
                     image_mask_B1HW = TF.resize(image_mask_B1HW, [H, W], interpolation=TF.InterpolationMode.NEAREST)
-                    image_mask_B1HW[heatmap_B1HW < self.options.feature_threshold] = 0
+                    # image_mask_B1HW[heatmap_B1HW < self.options.feature_threshold] = 0
+                    # TODO: turn heatmap to target_px
                     image_mask_B1HW = image_mask_B1HW.bool()
 
                     # If the current mask has no valid pixels, continue.
@@ -381,7 +384,7 @@ class TrainerACE:
                     # Create a tensor with the pixel coordinates of every feature vector.
                     pixel_positions_B2HW = self.pixel_grid_2HW[:, :H, :W].clone()  # It's 2xHxW (actual H and W) now.
                     pixel_positions_B2HW = pixel_positions_B2HW[None]  # 1x2xHxW
-                    pixel_positions_B2HW = pixel_positions_B2HW.expand(B, 2, H, W)  # Bx2xHxW
+                    pixel_positions_B2HW = pixel_positions_B2HW.expand(B, 2, H, W) + position_B2HW  # Bx2xHxW
 
                     # Bx4x4 -> Nx3x4 (for each image, repeat pose per feature)
                     aug_pose_inv = aug_pose_inv_B44[:, :3]
@@ -403,6 +406,7 @@ class TrainerACE:
 
                     batch_data = {
                         'features': normalize_shape(features_BCHW),
+                        'heatmap': normalize_shape(heatmap_B1HW + 0.1 * torch.rand_like(heatmap_B1HW)),
                         'target_px': normalize_shape(pixel_positions_B2HW),
                         'aug_poses_inv': aug_pose_inv,
                         'poses_inv': pose_inv,
@@ -464,7 +468,9 @@ class TrainerACE:
         torch.backends.cudnn.benchmark = True
 
         # Shuffle indices.
-        random_indices = torch.randperm(self.training_buffer_size, generator=self.training_generator)
+        # random_indices = torch.randperm(self.training_buffer_size, generator=self.training_generator)
+        _, random_indices = torch.sort(self.training_buffer['heatmap'], descending=True, dim=0)
+        random_indices = random_indices.flatten()
 
         # Iterate with mini batches.
         for batch_start in range(0, self.training_buffer_size, self.options.batch_size):
@@ -514,12 +520,13 @@ class TrainerACE:
         channels = features_bC.shape[1]
 
         # Reshape to a "fake" BCHW shape, since it's faster to run through the network compared to the original shape.
-        features_bCHW = features_bC[None, None, ...].view(-1, 16, 32, channels).permute(0, 3, 1, 2)
+        # features_bCHW = features_bC[None, None, ...].view(-1, 16, 32, channels).permute(0, 3, 1, 2)
         with autocast(enabled=self.options.use_half):
-            pred_scene_coords_b3HW = self.regressor.get_scene_coordinates(features_bCHW)
+            pred_scene_coords_b31 = self.regressor.get_scene_coordinates(features_bC).unsqueeze(-1).float()
 
-        # Back to the original shape. Convert to float32 as well.
-        pred_scene_coords_b31 = pred_scene_coords_b3HW.permute(0, 2, 3, 1).flatten(0, 2).unsqueeze(-1).float()
+
+        # # Back to the original shape. Convert to float32 as well.
+        # pred_scene_coords_b31 = pred_scene_coords_b3HW.permute(0, 2, 3, 1).flatten(0, 2).unsqueeze(-1).float()
 
         # Make 3D points homogeneous so that we can easily matrix-multiply them.
         pred_scene_coords_b41 = to_homogeneous(pred_scene_coords_b31)

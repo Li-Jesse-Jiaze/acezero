@@ -187,10 +187,33 @@ class CamLocDataset(Dataset):
 
     @staticmethod
     def _resize_image(image, short_size):
-        # Resize a numpy image as PIL. Works slightly better than resizing the tensor using torch's internal function.
+        """
+        Resize a numpy image as PIL such that the shortest side has `short_size` length in pixels,
+        and both dimensions are rounded to the nearest multiple of 8.
+        """
+        # Convert to PIL Image
         image = TF.to_pil_image(image)
-        # Will resize such that shortest side has short_size length in px.
-        image = TF.resize(image, short_size)
+        
+        # Get original dimensions
+        original_width, original_height = image.size
+        
+        # Determine the scaling factor based on the shortest side
+        if original_width < original_height:
+            scale_factor = short_size / original_width
+        else:
+            scale_factor = short_size / original_height
+        
+        # Calculate new dimensions
+        new_width = int(round(original_width * scale_factor))
+        new_height = int(round(original_height * scale_factor))
+        
+        # Adjust new dimensions to be multiples of 8
+        new_width = (new_width + 7) // 8 * 8
+        new_height = (new_height + 7) // 8 * 8
+        
+        # Resize the image
+        image = TF.resize(image, (new_height, new_width))
+        
         return image
 
     @staticmethod

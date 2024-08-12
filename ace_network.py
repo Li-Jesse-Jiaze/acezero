@@ -214,10 +214,16 @@ class Encoder(nn.Module):
 
         # heads
         heatmap = self.heatmap_head(feats) # Reliability map
-        # keypoints = self.keypoint_head(self._unfold2d(x, ws=8)) #Keypoint map logits
+        keypoints = self.keypoint_head(self._unfold2d(x, ws=8)) #Keypoint map logits)
+        scores = F.softmax(keypoints, 1)[:, :64]
+        position = torch.argmax(scores, dim=1).squeeze(1)  # [b, h, w] position
+        rows = position // 8
+        columns = position % 8
+        # TODO: effcient
+        positions = torch.stack((rows, columns), dim=1)
 
         # return feats, keypoints, heatmap
-        return feats, heatmap
+        return feats, positions, heatmap
 
 
 class Head(nn.Module):
@@ -244,33 +250,33 @@ class Head(nn.Module):
         self.head_skip = (
             nn.Identity()
             if self.in_channels == self.head_channels
-            else nn.Conv2d(self.in_channels, self.head_channels, 1, 1, 0)
+            else nn.Linear(self.in_channels, self.head_channels)
         )
 
-        self.res3_conv1 = nn.Conv2d(self.in_channels, self.head_channels, 1, 1, 0)
-        self.res3_conv2 = nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0)
-        self.res3_conv3 = nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0)
+        self.res3_linear1 = nn.Linear(self.in_channels, self.head_channels)
+        self.res3_linear2 = nn.Linear(self.head_channels, self.head_channels)
+        self.res3_linear3 = nn.Linear(self.head_channels, self.head_channels)
 
         self.res_blocks = []
 
         for block in range(num_head_blocks):
             self.res_blocks.append(
                 (
-                    nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0),
-                    nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0),
-                    nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0),
+                    nn.Linear(self.head_channels, self.head_channels),
+                    nn.Linear(self.head_channels, self.head_channels),
+                    nn.Linear(self.head_channels, self.head_channels),
                 )
             )
 
-            super(Head, self).add_module(str(block) + "c0", self.res_blocks[block][0])
-            super(Head, self).add_module(str(block) + "c1", self.res_blocks[block][1])
-            super(Head, self).add_module(str(block) + "c2", self.res_blocks[block][2])
+            super(Head, self).add_module(str(block) + "l0", self.res_blocks[block][0])
+            super(Head, self).add_module(str(block) + "l1", self.res_blocks[block][1])
+            super(Head, self).add_module(str(block) + "l2", self.res_blocks[block][2])
 
-        self.fc1 = nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0)
-        self.fc2 = nn.Conv2d(self.head_channels, self.head_channels, 1, 1, 0)
+        self.fc1 = nn.Linear(self.head_channels, self.head_channels)
+        self.fc2 = nn.Linear(self.head_channels, self.head_channels)
 
         if self.use_homogeneous:
-            self.fc3 = nn.Conv2d(self.head_channels, 4, 1, 1, 0)
+            self.fc3 = nn.Linear(self.head_channels, 4)
 
             # Use buffers because they need to be saved in the state dict.
             self.register_buffer("max_scale", torch.tensor([homogeneous_max_scale]))
@@ -279,15 +285,15 @@ class Head(nn.Module):
             self.register_buffer("h_beta", math.log(2) / (1.0 - self.max_inv_scale))
             self.register_buffer("min_inv_scale", 1.0 / self.min_scale)
         else:
-            self.fc3 = nn.Conv2d(self.head_channels, 3, 1, 1, 0)
+            self.fc3 = nn.Linear(self.head_channels, 3)
 
         # Learn scene coordinates relative to a mean coordinate (e.g. center of the scene).
-        self.register_buffer("mean", mean.clone().detach().view(1, 3, 1, 1))
+        self.register_buffer("mean", mean.clone().detach().view(1, 3))
 
     def forward(self, res):
-        x = F.relu(self.res3_conv1(res))
-        x = F.relu(self.res3_conv2(x))
-        x = F.relu(self.res3_conv3(x))
+        x = F.relu(self.res3_linear1(res))
+        x = F.relu(self.res3_linear2(x))
+        x = F.relu(self.res3_linear3(x))
 
         res = self.head_skip(res) + x
 
@@ -304,9 +310,8 @@ class Head(nn.Module):
 
         if self.use_homogeneous:
             # Dehomogenize coords:
-            # Softplus ensures we have a smooth homogeneous parameter with a minimum value = self.max_inv_scale.
             h_slice = (
-                F.softplus(sc[:, 3, :, :].unsqueeze(1), beta=self.h_beta.item())
+                F.softplus(sc[:, 3].unsqueeze(-1), beta=self.h_beta.item())
                 + self.max_inv_scale
             )
             h_slice.clamp_(max=self.min_inv_scale)
@@ -386,7 +391,7 @@ class Regressor(nn.Module):
         mean = torch.zeros((3,))
 
         # Count how many head blocks are in the dictionary.
-        pattern = re.compile(r"^heads\.\d+c0\.weight$")
+        pattern = re.compile(r"^heads\.\d+l0\.weight$")
         num_head_blocks = sum(1 for k in state_dict.keys() if pattern.match(k))
 
         # Whether the network uses homogeneous coordinates.
@@ -445,5 +450,9 @@ class Regressor(nn.Module):
         """
         Forward pass.
         """
-        features, _ = self.get_features(inputs)
-        return self.get_scene_coordinates(features)
+        # TODO: add px potision
+        features, _, _ = self.get_features(inputs)
+        b, c, h, w = features.shape
+        features = features.view(b, c, -1).permute(0, 2, 1).contiguous().view(-1, c)
+        sc = self.get_scene_coordinates(features)
+        return sc.view(b, h, w, -1).permute(0, 3, 1, 2).contiguous()
