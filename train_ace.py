@@ -225,6 +225,9 @@ if __name__ == '__main__':
 
     parser.add_argument('--refinement_ortho', type=str, default="gram-schmidt", choices=['gram-schmidt', 'procrustes'],
                         help='orthogonalization method for pose rotations after pose updates')
+    
+    parser.add_argument('--feature_threshold', type=float, default=0.3,
+                        help='learning rate for the pose refinement')
 
 
     options = parser.parse_args()

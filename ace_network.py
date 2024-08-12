@@ -213,11 +213,11 @@ class Encoder(nn.Module):
         feats = self.block_fusion(x3 + x4 + x5)
 
         # heads
-        # heatmap = self.heatmap_head(feats) # Reliability map
+        heatmap = self.heatmap_head(feats) # Reliability map
         # keypoints = self.keypoint_head(self._unfold2d(x, ws=8)) #Keypoint map logits
 
         # return feats, keypoints, heatmap
-        return feats
+        return feats, heatmap
 
 
 class Head(nn.Module):
@@ -445,5 +445,5 @@ class Regressor(nn.Module):
         """
         Forward pass.
         """
-        features = self.get_features(inputs)
+        features, _ = self.get_features(inputs)
         return self.get_scene_coordinates(features)
