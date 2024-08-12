@@ -9,6 +9,7 @@ dsacstar/dsacstar.egg-info/
 # Dataset files.
 datasets/7scenes*
 datasets/mip360*
+datasets/wayspots*
 datasets/t2*
 split_files/
 
