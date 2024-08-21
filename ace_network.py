@@ -11,53 +11,6 @@ import torch.nn.functional as F
 _logger = logging.getLogger(__name__)
 
 
-# class Encoder(nn.Module):
-#     """
-#     FCN encoder, used to extract features from the input images.
-
-#     The number of output channels is configurable, the default used in the paper is 512.
-#     """
-
-#     def __init__(self, out_channels=512):
-#         super(Encoder, self).__init__()
-
-#         self.out_channels = out_channels
-
-#         self.conv1 = nn.Conv2d(1, 32, 3, 1, 1)
-#         self.conv2 = nn.Conv2d(32, 64, 3, 2, 1)
-#         self.conv3 = nn.Conv2d(64, 128, 3, 2, 1)
-#         self.conv4 = nn.Conv2d(128, 256, 3, 2, 1)
-
-#         self.res1_conv1 = nn.Conv2d(256, 256, 3, 1, 1)
-#         self.res1_conv2 = nn.Conv2d(256, 256, 1, 1, 0)
-#         self.res1_conv3 = nn.Conv2d(256, 256, 3, 1, 1)
-
-#         self.res2_conv1 = nn.Conv2d(256, 512, 3, 1, 1)
-#         self.res2_conv2 = nn.Conv2d(512, 512, 1, 1, 0)
-#         self.res2_conv3 = nn.Conv2d(512, self.out_channels, 3, 1, 1)
-
-#         self.res2_skip = nn.Conv2d(256, self.out_channels, 1, 1, 0)
-
-#     def forward(self, x):
-#         x = F.relu(self.conv1(x))
-#         x = F.relu(self.conv2(x))
-#         x = F.relu(self.conv3(x))
-#         res = F.relu(self.conv4(x))
-
-#         x = F.relu(self.res1_conv1(res))
-#         x = F.relu(self.res1_conv2(x))
-#         x = F.relu(self.res1_conv3(x))
-
-#         res = res + x
-
-#         x = F.relu(self.res2_conv1(res))
-#         x = F.relu(self.res2_conv2(x))
-#         x = F.relu(self.res2_conv3(x))
-
-#         x = self.res2_skip(res) + x
-
-#         return x
-
 class BasicLayer(nn.Module):
     """
     Basic Convolutional Layer: Conv2d -> BatchNorm -> ReLU
@@ -212,21 +165,12 @@ class Encoder(nn.Module):
         x5 = F.interpolate(x5, (x3.shape[-2], x3.shape[-1]), mode="bilinear")
         feats = self.block_fusion(x3 + x4 + x5)
 
-        # heads
-        heatmap = self.heatmap_head(feats) # Reliability map
-        keypoints = self.keypoint_head(self._unfold2d(x, ws=8)) #Keypoint map logits)
-        scores = F.softmax(keypoints, 1)[:, :64]
-        position = torch.argmax(scores, dim=1).squeeze(1)  # [b, h, w] position
-        rows, columns = torch.div(position, 8, rounding_mode='floor'), torch.fmod(position, 8)
-        positions = torch.stack((rows, columns), dim=1)
-
-        # return feats, keypoints, heatmap
-        return feats, positions, heatmap
+        return feats
 
 
 class Head(nn.Module):
     """
-    MLP network predicting per-pixel scene coordinates given a feature vector. All layers are 1x1 convolutions.
+    MLP network predicting per-pixel scene coordinates given a feature vector. All layers Linear.
     """
 
     def __init__(
@@ -449,7 +393,7 @@ class Regressor(nn.Module):
         Forward pass.
         """
         # TODO: add px potision
-        features, _, _ = self.get_features(inputs)
+        features = self.get_features(inputs)
         b, c, h, w = features.shape
         features = features.view(b, c, -1).permute(0, 2, 1).contiguous().view(-1, c)
         sc = self.get_scene_coordinates(features)
