@@ -468,9 +468,9 @@ class TrainerACE:
         torch.backends.cudnn.benchmark = True
 
         # Shuffle indices.
-        # random_indices = torch.randperm(self.training_buffer_size, generator=self.training_generator)
-        _, random_indices = torch.sort(self.training_buffer['heatmap'], descending=True, dim=0)
-        random_indices = random_indices.flatten()
+        random_indices = torch.randperm(self.training_buffer_size, generator=self.training_generator)
+        # _, random_indices = torch.sort(self.training_buffer['heatmap'], descending=True, dim=0)
+        # random_indices = random_indices.flatten()
 
         # Iterate with mini batches.
         for batch_start in range(0, self.training_buffer_size, self.options.batch_size):

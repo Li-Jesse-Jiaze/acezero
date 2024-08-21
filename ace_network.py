@@ -217,9 +217,7 @@ class Encoder(nn.Module):
         keypoints = self.keypoint_head(self._unfold2d(x, ws=8)) #Keypoint map logits)
         scores = F.softmax(keypoints, 1)[:, :64]
         position = torch.argmax(scores, dim=1).squeeze(1)  # [b, h, w] position
-        rows = position // 8
-        columns = position % 8
-        # TODO: effcient
+        rows, columns = torch.div(position, 8, rounding_mode='floor'), torch.fmod(position, 8)
         positions = torch.stack((rows, columns), dim=1)
 
         # return feats, keypoints, heatmap
